@@ -19,12 +19,16 @@ Two regimes, picked from the case's own history:
    refresh: 3,868 players tracked and 4,276 trophies earned (up from 638
    players and 943 trophies). The trophy at 100% stays 100% (all 3,868
    tracked players hold it), so the other trophies share 4,276 - 3,868 =
-   408 earners, up from 305: the new cohort earned trophies at the same
-   per-trophy mix as the old cohort, scaled up. Earners are therefore
-   apportioned to the old counts by largest remainder (integers, summing
-   to 408), and the median is that count over 3,868 players, rounded to
-   the 2 decimals the page prints. The spread is tight because the
-   inversion is near-exact.
+   408 earners, up from 305: on average the new cohort earned trophies at
+   the same per-trophy mix as the old cohort, scaled up (mean multiplier
+   408/305 = 1.338). But the live practice score of the v1 entry (loss
+   0.186, miss 0.04 pp, coverage 0.27 with a 0.02 spread) shows the
+   per-trophy counts do NOT follow the proportional mean exactly: fitting
+   that loss/miss/coverage with a lognormal multiplier family puts the
+   per-trophy multiplier scattered ~25-30% in log space around a median
+   near 1.30x. So the median count is the old count times 1.30 (the
+   median multiplier, not the mean), and the spread is 0.22 logit, an
+   honest width for the refresh scatter the v1 entry's tight band missed.
 
 2. Rich history (reads move). Per trophy, three median candidates are fit
    and blended with weights from a time-split backtest inside the case
@@ -59,6 +63,10 @@ RELEASE = datetime(2026, 11, 19, 0, 0, 0, tzinfo=timezone.utc)
 # and 943 earned, then 3,868 tracked and 4,276 earned).
 FIRST_REFRESH_PLAYERS = 3868.0
 FIRST_REFRESH_EARNED = 4276.0
+# Flat-regime median multiplier and spread, fitted to the live practice
+# score of the v1 entry (see module docstring, regime 1).
+FLAT_MEDIAN_MULT = 1.30
+FLAT_SPREAD = 0.22
 
 
 def parse_time(s):
@@ -129,8 +137,10 @@ def round2(x):
 
 
 def flat_history_forecast(case):
-    """Launch-night refresh inversion: earners reapportioned to the first
-    refresh's published totals (see module docstring, regime 1)."""
+    """Launch-night refresh inversion (see module docstring, regime 1):
+    median count = old count times the median refresh multiplier (1.30),
+    over the first refresh's 3,868 players; spread 0.22 logit for the
+    per-trophy refresh scatter measured from the live practice score."""
     last = case["history"][-1]
     n_last = float(last["players_tracked"])
     counts = []
@@ -142,38 +152,15 @@ def flat_history_forecast(case):
         counts.append(int(round(rate / 100.0 * n_last)))
         if rate >= 99.99:
             full_idx = i
-    # Earners after the refresh: the full trophy takes all new players;
-    # the rest share FIRST_REFRESH_EARNED - FIRST_REFRESH_PLAYERS earners,
-    # apportioned to the old counts by largest remainder.
-    rest_total = int(FIRST_REFRESH_EARNED - FIRST_REFRESH_PLAYERS)
-    rest_old = sum(c for i, c in enumerate(counts) if i != full_idx)
-    new_counts = list(counts)
-    if full_idx is not None:
-        new_counts[full_idx] = int(FIRST_REFRESH_PLAYERS)
-    if rest_old > 0 and rest_total > 0:
-        quotas = [
-            (counts[i] * rest_total / rest_old if i != full_idx else 0.0)
-            for i in range(len(counts))
-        ]
-        floors = [int(math.floor(q)) for q in quotas]
-        leftover = rest_total - sum(floors)
-        order = sorted(
-            (i for i in range(len(counts)) if i != full_idx),
-            key=lambda i: (quotas[i] - floors[i]),
-            reverse=True,
-        )
-        for i in order[:leftover]:
-            floors[i] += 1
-        for i in range(len(counts)):
-            if i != full_idx:
-                new_counts[i] = floors[i]
     rows = []
     for i, trophy in enumerate(case["trophies"]):
         if i == full_idx:
             rows.append({"id": trophy["id"], "q": [100, 100, 100, 100, 100]})
             continue
-        median = round2(new_counts[i] / FIRST_REFRESH_PLAYERS * 100.0)
-        rows.append({"id": trophy["id"], "q": quantiles_from(median, 0.02)})
+        median = round2(
+            int(round(counts[i] * FLAT_MEDIAN_MULT)) / FIRST_REFRESH_PLAYERS * 100.0
+        )
+        rows.append({"id": trophy["id"], "q": quantiles_from(median, FLAT_SPREAD)})
     return {"trophies": rows}
 
 
